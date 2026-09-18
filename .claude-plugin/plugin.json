@@ -1,0 +1,11 @@
+{
+  "name": "kashrock",
+  "description": "Esports props, odds, live scores, and player stats across 8 titles for agents.",
+  "version": "0.6.6",
+  "author": {
+    "name": "KashRock",
+    "url": "https://www.kashrock.com"
+  },
+  "homepage": "https://www.kashrock.com/mcp",
+  "keywords": ["esports", "mcp", "cs2", "valorant", "dota", "props", "odds"]
+}

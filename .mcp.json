@@ -1,0 +1,58 @@
+{
+  "mcpServers": {
+    "kashrock": {
+      "command": "uvx",
+      "args": ["kashrock-mcp"],
+      "_meta": {
+        "ideToolTitles": {
+          "login": "Sign In With Google",
+          "whoami": "Check Plan & Quota",
+          "list_capabilities": "List Available Tools",
+          "list_sports": "List Sports Covered",
+          "list_books": "List Sportsbooks & DFS Apps",
+          "list_markets": "List Canonical Markets",
+          "explain_error": "Explain An Error",
+          "suggest_build": "Suggest Tools For A Goal",
+          "get_props": "Get DFS Player Props",
+          "get_player_props": "Get Named-Player Props",
+          "get_moneylines": "Get Team Moneylines",
+          "get_lines": "Get Consensus Lines",
+          "get_best_lines": "Get Best Cross-Venue Lines",
+          "get_gaps": "Get Book-vs-Book Line Gaps",
+          "get_coverage": "Get Book Coverage",
+          "get_media": "Get Player & Team Media",
+          "get_player_snapshot": "Get Player Snapshot",
+          "search_players": "Search Players",
+          "get_player": "Get Player Profile",
+          "get_player_stats": "Get Player Stats",
+          "get_player_stats_full": "Get Full Player Stats",
+          "get_rankings": "Get Player Rankings",
+          "research_board": "Get Research Slips",
+          "research_board_tapes": "Get Research Quote Tapes",
+          "research_player": "Get Player Career Tape",
+          "get_matches": "Get Matches",
+          "get_match": "Get Match",
+          "search_matches": "Search Matches",
+          "get_team_matches": "Get Team Schedule",
+          "get_streams": "Get Live Streams",
+          "get_live_games": "Get Live Games",
+          "get_live_boxscore": "Get Live Boxscore",
+          "get_live_frame": "Get Live Frame",
+          "get_live_events": "Get Live Events",
+          "get_live_odds": "Get Live Odds",
+          "get_live_odds_history": "Get Live Odds History",
+          "get_live_ws": "Get Live Push Feed Contract",
+          "get_gamelogs": "Get Player Gamelogs",
+          "get_boxscore": "Get Finished Boxscore",
+          "get_results": "Get Settled Prop Results",
+          "get_lines_history": "Get Closing Lines History",
+          "get_history_tape": "Get Quote Tape",
+          "get_team_h2h": "Get Team Head-to-Head",
+          "get_match_prep": "Get Match Prep",
+          "get_player_board": "Get Player Board",
+          "get_tournament_maps": "Get Tournament Maps"
+        }
+      }
+    }
+  }
+}
