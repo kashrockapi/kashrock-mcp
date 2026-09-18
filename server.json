@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.kashrock/kashrock-mcp",
+  "title": "KashRock MCP",
+  "description": "Esports props, odds, live scores, and player stats across 8 titles for agents.",
+  "websiteUrl": "https://www.kashrock.com/mcp",
+  "repository": {
+    "url": "https://github.com/kashrockapi/kashrock-mcp",
+    "source": "github"
+  },
+  "version": "0.6.6",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "kashrock-mcp",
+      "version": "0.6.6",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "KASHROCK_API_KEY",
+          "description": "KashRock API key. Optional — skips the login tool's Google sign-in flow by supplying an existing key directly.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "auth": {
+        "mode": "per-tool",
+        "description": "initialize and tools/list require no authentication. Data tools call the live KashRock API and return a plain-English \"not signed in\" result until the login tool (Google OAuth device flow) or KASHROCK_API_KEY supplies a key."
+      }
+    }
+  }
+}
