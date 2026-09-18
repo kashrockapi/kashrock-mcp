@@ -1,5 +1,7 @@
 # kashrock-mcp
 
+<!-- mcp-name: com.kashrock/kashrock-mcp -->
+
 Full tier-scoped KashRock esports MCP for Cursor, Claude, and other agents.
 
 ## Install (effortless)
