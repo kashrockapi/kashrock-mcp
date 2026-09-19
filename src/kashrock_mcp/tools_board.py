@@ -1,4 +1,4 @@
-"""Board tools: props, moneylines, consensus lines, coverage, media, snapshots."""
+"""Board tools: props, consensus lines, gaps, media."""
 
 from __future__ import annotations
 
@@ -49,6 +49,7 @@ def register_board(mcp: Any) -> None:
     @mcp.tool()
     async def get_props(
         sport: str,
+        coverage_only: bool = False,
         book: str = "",
         player: str = "",
         market: str = "",
@@ -57,7 +58,48 @@ def register_board(mcp: Any) -> None:
         offset: int = 0,
         slim: bool = True,
     ) -> Any:
-        """DFS player props only. Prefer book/market/player filters — default slim+limit keeps payloads small."""
+        """DFS player props only, or per-book coverage counts. Use get_player_props for
+        named-sportsbook props; get_lines for team mainlines; get_gaps for the same
+        prop priced differently across books.
+
+        Params:
+          sport (str, e.g. "cs2"): required.
+          coverage_only (bool, e.g. false): true returns per-book prop counts/freshness
+            with no prop rows — skips book/player/market/market_contains/limit/offset/slim below.
+          book (str, e.g. "prizepicks"): filter to one DFS book.
+          player (str, e.g. "s1mple"): substring filter on player name.
+          market (str, e.g. "CS2_KILLS_MAP_1"): exact stat_type filter.
+          market_contains (str, e.g. "KILLS"): substring stat_type filter.
+          limit (int, e.g. 50): row cap, max 200.
+          offset (int, e.g. 0): pagination offset.
+          slim (bool, e.g. true): default true keeps payloads small.
+
+        Returns: {props:[...], books, board, fetched_at}, or with coverage_only,
+        {books: {book_name: {count, note}}}.
+        """
+        if coverage_only:
+            data = await api_get(f"/v6/esports/{sport}/props", {"include_props": "false"})
+            if isinstance(data, dict) and data.get("ok") is False:
+                return data
+            if not isinstance(data, dict):
+                return data
+            if data.get("books"):
+                return ok(
+                    {
+                        "books": {
+                            str(row.get("book")): {
+                                "count": row.get("prop_count") or 0,
+                                "note": row.get("note"),
+                            }
+                            for row in data["books"]
+                            if isinstance(row, dict)
+                        }
+                    },
+                    sport=sport,
+                    total=data.get("total") or 0,
+                )
+            return ok({"books": {}}, sport=sport, total=0)
+
         params: Dict[str, Any] = {
             "limit": _clamp_limit(limit),
             "offset": max(0, int(offset or 0)),
@@ -123,6 +165,7 @@ def register_board(mcp: Any) -> None:
     async def get_player_props(
         sport: str,
         board: str = "all",
+        include_media: bool = False,
         book: str = "",
         player: str = "",
         player_id: int = 0,
@@ -135,7 +178,29 @@ def register_board(mcp: Any) -> None:
         slim: bool = True,
         view: str = "groups",
     ) -> Any:
-        """DFS + sportsbook named-player props. Default view=groups + slim — not the full 8MB dump."""
+        """DFS + sportsbook named-player props. Use get_props for anonymous DFS-only
+        props; get_lines for team mainlines; get_gaps for the same prop priced
+        differently across books.
+
+        Params:
+          sport (str, e.g. "cs2"): required.
+          board (str, e.g. "all"): dfs | main | all.
+          include_media (bool, e.g. true): with player set, attaches media.player_image
+            / media.team_logo for that player in one call instead of a separate get_media call.
+          book (str, e.g. "pinnacle"): filter to one book.
+          player (str, e.g. "s1mple"): filter to one named player.
+          player_id (int, e.g. 12345): filter by numeric provider-linked player id.
+          market (str, e.g. "CS2_KILLS_MAP_1"): exact stat_type filter.
+          market_contains (str, e.g. "KILLS"): substring stat_type filter.
+          event_id (str, e.g. "kr_cs2_evt_123"): filter to one event.
+          include_event_lines (bool, e.g. false): attach per-event line context.
+          limit (int, e.g. 50): row cap, max 200.
+          offset (int, e.g. 0): pagination offset.
+          slim (bool, e.g. true): default true keeps payloads small.
+          view (str, e.g. "groups"): groups (default, grouped by player/market) | full.
+
+        Returns: {board, groups:[...], books, media?} — groups is the default (slim+limit) shape.
+        """
         params: Dict[str, Any] = {
             "board": board or "all",
             "view": view or "groups",
@@ -171,13 +236,18 @@ def register_board(mcp: Any) -> None:
             total = data.get("total_groups", data.get("total", len(groups)))
             returned = data.get("returned", len(groups))
             has_more = bool(data.get("has_more"))
+        result: Dict[str, Any] = {
+            "board": data.get("board"),
+            "groups": groups,
+            "books": data.get("books"),
+            "fetched_at": data.get("generated_at"),
+        }
+        if include_media and player:
+            media = await api_get(f"/v6/esports/{sport}/media", {"player": player})
+            if not (isinstance(media, dict) and media.get("ok") is False):
+                result["media"] = media
         return ok(
-            {
-                "board": data.get("board"),
-                "groups": groups,
-                "books": data.get("books"),
-                "fetched_at": data.get("generated_at"),
-            },
+            result,
             sport=sport,
             total=total,
             returned=returned,
@@ -196,66 +266,104 @@ def register_board(mcp: Any) -> None:
         )
 
     @mcp.tool()
-    async def get_moneylines(
-        sport: str,
-        book: str = "",
-        limit: int = DEFAULT_LIMIT,
-        offset: int = 0,
-    ) -> Any:
-        """Team match moneylines from consensus lines board (not DFS props). Upcoming only by default."""
-        data = await api_get(
-            f"/v6/esports/{sport}/lines",
-            {"market": "match_winner", "live_only": "true"},
-        )
-        if isinstance(data, dict) and data.get("ok") is False:
-            return data
-        events = list((data or {}).get("events") or []) if isinstance(data, dict) else []
-        rows: List[Dict[str, Any]] = []
-        for ev in events:
-            for mkt in ev.get("markets") or []:
-                for outcome in mkt.get("outcomes") or []:
-                    for src in outcome.get("sources") or []:
-                        key = str(src.get("source") or "").lower()
-                        if book and book.lower() not in key:
-                            continue
-                        rows.append(
-                            {
-                                "book": key,
-                                "stat_type": "MONEYLINE",
-                                "team": outcome.get("name"),
-                                "home_team": ev.get("home_team"),
-                                "away_team": ev.get("away_team"),
-                                "odds": src.get("american"),
-                                "probability": src.get("probability"),
-                                "event_id": ev.get("event_id"),
-                                "event_time": ev.get("event_time"),
-                                "market": mkt.get("market"),
-                            }
-                        )
-        page = _page(rows, limit=limit, offset=offset)
-        return ok(
-            {"moneylines": page["rows"]},
-            sport=sport,
-            total=page["total"],
-            returned=page["returned"],
-            filters={
-                "book": book,
-                "offset": page["offset"],
-                "limit": page["limit"],
-                "has_more": page["has_more"],
-            },
-            hint="For full consensus use get_lines; top edges use get_best_lines.",
-        )
-
-    @mcp.tool()
     async def get_lines(
         sport: str,
+        view: str = "consensus",
         market: str = "",
         event_id: str = "",
+        book: str = "",
         live_only: bool = True,
+        limit: int = 25,
+        offset: int = 0,
     ) -> Any:
-        """Consensus mainlines across sportsbooks, DFS Teams, and prediction markets (Hobby+). live_only=true (default) drops started matches."""
-        params: Dict[str, Any] = {"live_only": str(bool(live_only)).lower()}
+        """Team mainlines: full consensus, top cross-venue edges, or flattened
+        moneylines — all from the same lines board. Use get_props/get_player_props for
+        player props, not this tool; use get_gaps for cross-book price gaps on the
+        same DFS prop.
+
+        Params:
+          sport (str, e.g. "cs2"): required.
+          view (str, e.g. "consensus"): consensus (default; full events/markets/outcomes
+            across sportsbooks, DFS Teams, and prediction markets) | best_edges (top
+            cross-venue consensus edges only) | moneyline (flattened book/team/odds rows,
+            forced to market=match_winner).
+          market (str, e.g. "match_winner"): view=consensus/best_edges filter; ignored for moneyline.
+          event_id (str, e.g. "kr_cs2_evt_123"): view=consensus only — one event.
+          book (str, e.g. "pinnacle"): view=moneyline only — filter to one book.
+          live_only (bool, e.g. true): default true drops started matches (consensus/best_edges/moneyline).
+          limit (int, e.g. 25): view=best_edges/moneyline row cap, max 200.
+          offset (int, e.g. 0): view=moneyline pagination offset.
+
+        Returns: consensus -> {events:[...]}; best_edges -> {top_edges:[...]}; moneyline -> {moneylines:[...]}.
+        Hobby+.
+        """
+        v = (view or "consensus").strip().lower()
+
+        if v == "moneyline":
+            data = await api_get(
+                f"/v6/esports/{sport}/lines",
+                {"market": "match_winner", "live_only": "true"},
+            )
+            if isinstance(data, dict) and data.get("ok") is False:
+                return data
+            events = list((data or {}).get("events") or []) if isinstance(data, dict) else []
+            rows: List[Dict[str, Any]] = []
+            for ev in events:
+                for mkt in ev.get("markets") or []:
+                    for outcome in mkt.get("outcomes") or []:
+                        for src in outcome.get("sources") or []:
+                            key = str(src.get("source") or "").lower()
+                            if book and book.lower() not in key:
+                                continue
+                            rows.append(
+                                {
+                                    "book": key,
+                                    "stat_type": "MONEYLINE",
+                                    "team": outcome.get("name"),
+                                    "home_team": ev.get("home_team"),
+                                    "away_team": ev.get("away_team"),
+                                    "odds": src.get("american"),
+                                    "probability": src.get("probability"),
+                                    "event_id": ev.get("event_id"),
+                                    "event_time": ev.get("event_time"),
+                                    "market": mkt.get("market"),
+                                }
+                            )
+            page = _page(rows, limit=limit, offset=offset)
+            return ok(
+                {"moneylines": page["rows"]},
+                sport=sport,
+                total=page["total"],
+                returned=page["returned"],
+                filters={
+                    "book": book,
+                    "offset": page["offset"],
+                    "limit": page["limit"],
+                    "has_more": page["has_more"],
+                },
+                hint="For full consensus use view=consensus; top edges use view=best_edges.",
+            )
+
+        if v == "best_edges":
+            params: Dict[str, Any] = {"live_only": str(bool(live_only)).lower()}
+            if market:
+                params["market"] = market
+            data = await api_get(f"/v6/esports/{sport}/lines", params or None)
+            if isinstance(data, dict) and data.get("ok") is False:
+                return data
+            edges = list((data or {}).get("top_edges") or []) if isinstance(data, dict) else []
+            page = _page(edges, limit=limit, offset=0)
+            return ok(
+                {"top_edges": page["rows"], "pm_weight": (data or {}).get("pm_weight")},
+                sport=sport,
+                total=page["total"],
+                returned=page["returned"],
+                filters={"market": market or "all", "limit": page["limit"]},
+                hint="Model-driven edges are internal only. This is venue consensus edges only.",
+            )
+
+        # consensus (default)
+        params = {"live_only": str(bool(live_only)).lower()}
         if market:
             params["market"] = market
         if event_id:
@@ -274,28 +382,6 @@ def register_board(mcp: Any) -> None:
         )
 
     @mcp.tool()
-    async def get_best_lines(
-        sport: str, market: str = "", limit: int = 25, live_only: bool = True
-    ) -> Any:
-        """Top cross-venue edges from /lines (useful operation — not raw board dump). live_only=true (default) drops started matches."""
-        params: Dict[str, Any] = {"live_only": str(bool(live_only)).lower()}
-        if market:
-            params["market"] = market
-        data = await api_get(f"/v6/esports/{sport}/lines", params or None)
-        if isinstance(data, dict) and data.get("ok") is False:
-            return data
-        edges = list((data or {}).get("top_edges") or []) if isinstance(data, dict) else []
-        page = _page(edges, limit=limit, offset=0)
-        return ok(
-            {"top_edges": page["rows"], "pm_weight": (data or {}).get("pm_weight")},
-            sport=sport,
-            total=page["total"],
-            returned=page["returned"],
-            filters={"market": market or "all", "limit": page["limit"]},
-            hint="Model-driven edges are internal only. This is venue consensus edges only.",
-        )
-
-    @mcp.tool()
     async def get_gaps(
         sport: str,
         min_gap: float = 0.5,
@@ -306,7 +392,22 @@ def register_board(mcp: Any) -> None:
         limit: int = DEFAULT_LIMIT,
         offset: int = 0,
     ) -> Any:
-        """DFS book-vs-book line spreads for the same player/event/market (Hobby+)."""
+        """DFS book-vs-book line spreads for the same player/event/market. Not team
+        mainlines (get_lines) and not model edges.
+
+        Params:
+          sport (str, e.g. "cs2"): required.
+          min_gap (float, e.g. 0.5): minimum line_max−line_min spread to include.
+          player (str, e.g. "s1mple"): filter to one player.
+          market (str, e.g. "CS2_KILLS_MAP_1"): exact stat_type filter.
+          market_contains (str, e.g. "KILLS"): substring stat_type filter.
+          book (str, e.g. "prizepicks"): filter to one book.
+          limit (int, e.g. 50): row cap, max 200.
+          offset (int, e.g. 0): pagination offset.
+
+        Returns: {gaps:[...]} — each row's line_gap = line_max − line_min across DFS books.
+        Hobby+.
+        """
         params: Dict[str, Any] = {
             "min_gap": min_gap,
             "limit": _clamp_limit(limit),
@@ -345,34 +446,6 @@ def register_board(mcp: Any) -> None:
         )
 
     @mcp.tool()
-    async def get_coverage(sport: str) -> Any:
-        """How many props each book has on the live board for a sport."""
-        data = await api_get(
-            f"/v6/esports/{sport}/props",
-            {"include_props": "false"},
-        )
-        if isinstance(data, dict) and data.get("ok") is False:
-            return data
-        if not isinstance(data, dict):
-            return data
-        if data.get("books"):
-            return ok(
-                {
-                    "books": {
-                        str(row.get("book")): {
-                            "count": row.get("prop_count") or 0,
-                            "note": row.get("note"),
-                        }
-                        for row in data["books"]
-                        if isinstance(row, dict)
-                    }
-                },
-                sport=sport,
-                total=data.get("total") or 0,
-            )
-        return ok({"books": {}}, sport=sport, total=0)
-
-    @mcp.tool()
     async def get_media(
         sport: str,
         player: str = "",
@@ -381,7 +454,20 @@ def register_board(mcp: Any) -> None:
         team_id: int = 0,
         opponent: str = "",
     ) -> Any:
-        """Resolve player faces + team logos. Same links shape as props (player_image, team_logo)."""
+        """Resolve player faces + team logos by name or id. Standalone because it also
+        resolves team-only/opponent lookups with no prop context — for a one-shot
+        player-props-plus-media call use get_player_props(include_media=true) instead.
+
+        Params:
+          sport (str, e.g. "cs2"): required.
+          player (str, e.g. "s1mple"): player name.
+          player_id (int, e.g. 12345): numeric provider-linked player id.
+          team (str, e.g. "Natus Vincere"): team name.
+          team_id (int, e.g. 678): numeric provider-linked team id.
+          opponent (str, e.g. "FaZe Clan"): opponent team name, for matchup-scoped lookups.
+
+        Returns: {player_image?, team_logo?, ...} — same links shape used in get_props rows.
+        """
         params: Dict[str, Any] = {}
         if player:
             params["player"] = player
@@ -397,44 +483,3 @@ def register_board(mcp: Any) -> None:
         if isinstance(data, dict) and data.get("ok") is False:
             return data
         return ok(data, sport=sport)
-
-    @mcp.tool()
-    async def get_player_snapshot(
-        sport: str,
-        player: str,
-        board: str = "all",
-        market_contains: str = "",
-        limit: int = DEFAULT_LIMIT,
-    ) -> Any:
-        """One-shot: media links + slim player-prop groups for a player (agent-friendly)."""
-        media = await api_get(
-            f"/v6/esports/{sport}/media",
-            {"player": player},
-        )
-        params: Dict[str, Any] = {
-            "board": board or "all",
-            "player": player,
-            "view": "groups",
-            "slim": "true",
-            "limit": _clamp_limit(limit),
-            "offset": 0,
-        }
-        if market_contains:
-            params["market_contains"] = market_contains
-        props = await api_get(f"/v6/esports/{sport}/player-props", params)
-        if isinstance(media, dict) and media.get("ok") is False:
-            return media
-        if isinstance(props, dict) and props.get("ok") is False:
-            return props
-        groups = list((props or {}).get("groups") or []) if isinstance(props, dict) else []
-        return ok(
-            {
-                "media": media if isinstance(media, dict) else {},
-                "groups": groups,
-                "books": (props or {}).get("books") if isinstance(props, dict) else [],
-            },
-            sport=sport,
-            total=(props or {}).get("total_groups", len(groups)) if isinstance(props, dict) else len(groups),
-            returned=len(groups),
-            filters={"player": player, "board": board, "market_contains": market_contains},
-        )
